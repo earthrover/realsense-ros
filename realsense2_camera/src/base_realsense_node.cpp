@@ -1459,17 +1459,15 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         // double frame_time = frame.get_timestamp();
         double frame_time;  // milliseconds or microseconds depending on origin
         double lag = 0.0;   // [seconds] delay between generating image and recieving it
-        bool using_metadata;
+        bool using_metadata = frame.supports_frame_metadata(RS2_FRAME_METADATA_SENSOR_TIMESTAMP);
         // get metadata if available
-        if (frame.supports_frame_metadata(RS2_FRAME_METADATA_SENSOR_TIMESTAMP))
+        if (using_metadata)
         {
             ROS_INFO("Metadata available");
             frame_time = /*us*/frame.get_frame_metadata(RS2_FRAME_METADATA_SENSOR_TIMESTAMP) / /*us to s*/1e6;
-            using_metadata = true;
         }else
         {
             frame_time = /*ms*/frame.get_timestamp() / /*ms to s*/1e3;
-            using_metadata = false;
         }
 
         // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
@@ -1492,7 +1490,7 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
 
         // Check for overflow of the camera clock
         auto stream = frame.get_profile().stream_type();
-        if (frame_time < _last_stamp[stream])
+        if ( using_metadata && (frame_time < _last_stamp[stream]) )
         {
           _k_overflow[stream] += 1;
           ROS_INFO_STREAM("Overflow on camera " << stream << ": " << _k_overflow[stream]);
@@ -1506,8 +1504,13 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         }
         else
         {
-            // t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+          if (!using_metadata)
+          {
+            t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+          } else
+          {
             t = ros::Time(_ros_time_base.toSec() + 4294.967296*_k_overflow[stream] + (frame_time-_camera_time_base) - lag);
+          }
         }
 
         if (frame.is<rs2::frameset>())
