@@ -151,14 +151,14 @@ void BaseRealSenseNode::setupErrorCallback()
     {
         s.set_notifications_callback([&](const rs2::notification& n)
         {
-            std::vector<std::string> error_strings({"RT IC2 Config error", 
+            std::vector<std::string> error_strings({"RT IC2 Config error",
                                                     "Motion Module force pause",
                                                     "stream start failure"});
             if (n.get_severity() >= RS2_LOG_SEVERITY_ERROR)
             {
                 ROS_WARN_STREAM("Hardware Notification:" << n.get_description() << "," << n.get_timestamp() << "," << n.get_severity() << "," << n.get_category());
             }
-            if (error_strings.end() != find_if(error_strings.begin(), error_strings.end(), [&n] (std::string err) 
+            if (error_strings.end() != find_if(error_strings.begin(), error_strings.end(), [&n] (std::string err)
                                         {return (n.get_description().find(err) != std::string::npos); }))
             {
                 ROS_ERROR_STREAM("Hardware Reset is needed. use option: initial_reset:=true");
@@ -321,14 +321,14 @@ void BaseRealSenseNode::set_sensor_auto_exposure_roi(rs2::sensor sensor)
     }
 }
 
-void BaseRealSenseNode::readAndSetDynamicParam(ros::NodeHandle& nh1, std::shared_ptr<ddynamic_reconfigure::DDynamicReconfigure> ddynrec, 
-                                               const std::string option_name, const int min_val, const int max_val, rs2::sensor sensor, 
+void BaseRealSenseNode::readAndSetDynamicParam(ros::NodeHandle& nh1, std::shared_ptr<ddynamic_reconfigure::DDynamicReconfigure> ddynrec,
+                                               const std::string option_name, const int min_val, const int max_val, rs2::sensor sensor,
                                                int* option_value)
 {
     nh1.param(option_name, *option_value, *option_value); //param (const std::string &param_name, T &param_val, const T &default_val) const
     if (*option_value < min_val) *option_value = min_val;
     if (*option_value > max_val) *option_value = max_val;
-    
+
     ddynrec->registerVariable<int>(
         option_name, *option_value, [this, sensor, option_name](int new_value){set_auto_exposure_roi(option_name, sensor, new_value);},
         "auto-exposure " + option_name + " coordinate", min_val, max_val);
@@ -1414,7 +1414,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
         tf::Quaternion q(-msg.transform.rotation.x,-msg.transform.rotation.y,-msg.transform.rotation.z,msg.transform.rotation.w);
         tfv=tf::quatRotate(q,tfv);
         tf::vector3TFToMsg(tfv,v_msg.vector);
-	
+
         geometry_msgs::Vector3Stamped om_msg;
         om_msg.vector.x = -pose.angular_velocity.z;
         om_msg.vector.y = -pose.angular_velocity.x;
@@ -1422,7 +1422,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
         tf::vector3MsgToTF(om_msg.vector,tfv);
         tfv=tf::quatRotate(q,tfv);
         tf::vector3TFToMsg(tfv,om_msg.vector);
-	
+
 
         nav_msgs::Odometry odom_msg;
         _seq[stream_index] += 1;
@@ -1454,9 +1454,23 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
 {
     _synced_imu_publisher->Pause();
-    
+
     try{
-        double frame_time = frame.get_timestamp();
+        // double frame_time = frame.get_timestamp();
+        double frame_time;  // milliseconds or microseconds depending on origin
+        double lag = 0.0;   // [seconds] delay between generating image and recieving it
+        bool using_metadata;
+        // get metadata if available
+        if (frame.supports_frame_metadata(RS2_FRAME_METADATA_SENSOR_TIMESTAMP))
+        {
+            ROS_INFO("Metadata available");
+            frame_time = /*us*/frame.get_frame_metadata(RS2_FRAME_METADATA_SENSOR_TIMESTAMP) / /*us to s*/1e6;
+            using_metadata = true;
+        }else
+        {
+            frame_time = /*ms*/frame.get_timestamp() / /*ms to s*/1e3;
+            using_metadata = false;
+        }
 
         // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
         // and the incremental timestamp from the camera.
@@ -1464,8 +1478,26 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         bool placeholder_false(false);
         if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
         {
-            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+          // setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+            ROS_INFO("Initializing timestamp with Metadata");
+            setBaseTime(frame_time, !using_metadata);
+            // init maps
+            _last_stamp[RS2_STREAM_DEPTH] = 0.0;
+            _last_stamp[RS2_STREAM_COLOR] = 0.0;
+            _last_stamp[RS2_STREAM_INFRARED] = 0.0;
+            _k_overflow[RS2_STREAM_DEPTH] = 0;
+            _k_overflow[RS2_STREAM_COLOR] = 0;
+            _k_overflow[RS2_STREAM_INFRARED] = 0;
         }
+
+        // Check for overflow of the camera clock
+        auto stream = frame.get_profile().stream_type();
+        if (frame_time < _last_stamp[stream])
+        {
+          _k_overflow[stream] += 1;
+          ROS_INFO_STREAM("Overflow on camera " << stream << ": " << _k_overflow[stream]);
+        }
+        _last_stamp[stream] = frame_time;
 
         ros::Time t;
         if (_sync_frames)
@@ -1474,7 +1506,8 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         }
         else
         {
-            t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+            // t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+            t = ros::Time(_ros_time_base.toSec() + 4294.967296*_k_overflow[stream] + (frame_time-_camera_time_base) - lag);
         }
 
         if (frame.is<rs2::frameset>())
@@ -1957,8 +1990,8 @@ void BaseRealSenseNode::publishPointCloud(rs2::points pc, const ros::Time& t, co
     if (use_texture)
     {
         std::set<rs2_format> available_formats{ rs2_format::RS2_FORMAT_RGB8, rs2_format::RS2_FORMAT_Y8 };
-        
-        texture_frame_itr = find_if(frameset.begin(), frameset.end(), [&texture_source_id, &available_formats] (rs2::frame f) 
+
+        texture_frame_itr = find_if(frameset.begin(), frameset.end(), [&texture_source_id, &available_formats] (rs2::frame f)
                                 {return (rs2_stream(f.get_profile().stream_type()) == texture_source_id) &&
                                             (available_formats.find(f.get_profile().format()) != available_formats.end()); });
         if (texture_frame_itr == frameset.end())
@@ -1998,7 +2031,7 @@ void BaseRealSenseNode::publishPointCloud(rs2::points pc, const ros::Time& t, co
     msg_pointcloud.is_dense = true;
 
     sensor_msgs::PointCloud2Modifier modifier(msg_pointcloud);
-    modifier.setPointCloud2FieldsByString(1, "xyz");    
+    modifier.setPointCloud2FieldsByString(1, "xyz");
 
     vertex = pc.get_vertices();
     if (use_texture)
@@ -2100,8 +2133,8 @@ rs2::stream_profile BaseRealSenseNode::getAProfile(const stream_index_pair& stre
 {
     const std::vector<rs2::stream_profile> profiles = _sensors[stream].get_stream_profiles();
     return *(std::find_if(profiles.begin(), profiles.end(),
-                                            [&stream] (const rs2::stream_profile& profile) { 
-                                                return ((profile.stream_type() == stream.first) && (profile.stream_index() == stream.second)); 
+                                            [&stream] (const rs2::stream_profile& profile) {
+                                                return ((profile.stream_type() == stream.first) && (profile.stream_index() == stream.second));
                                             }));
 }
 
@@ -2232,7 +2265,7 @@ void BaseRealSenseNode::startMonitoring()
             publish_temperature();
         }
     });
-    t.detach();    
+    t.detach();
 }
 
 void BaseRealSenseNode::publish_temperature()
