@@ -1,3 +1,10 @@
+# earth_rover notice:
+This repository is forked from Intel for earth_rover.
+The default branch in this repository has been changed to `earth_rover_modifications`.
+The modifications in this fork include:
+- forcing camera metadata (if available) to compute the timestamp of the ROS image in order to improve synchronization timestamps between color and infrared images.
+
+----
 # ROS Wrapper for Intel&reg; RealSense&trade; Devices
 These are packages for using Intel RealSense cameras (D400 series SR300 camera and T265 Tracking Module) with ROS.
 
@@ -140,7 +147,7 @@ rosrun rqt_reconfigure rqt_reconfigure
 <p align="center"><img src="https://user-images.githubusercontent.com/40540281/55330573-065d8600-549a-11e9-996a-5d193cbd9a93.PNG" /></p>
 
 ### Work with multiple cameras
-**Important Notice:** Launching multiple T265 cameras is currently not supported. This will be addressed in a later version. 
+**Important Notice:** Launching multiple T265 cameras is currently not supported. This will be addressed in a later version.
 
 Here is an example of how to start the camera node and streaming with two cameras using the [rs_multiple_devices.launch](./realsense2_camera/launch/rs_multiple_devices.launch).
 ```bash
@@ -224,7 +231,7 @@ python src/realsense/realsense2_camera/scripts/rs2_test.py --all
 * This ROS node does not currently support [ROS Lunar Loggerhead](http://wiki.ros.org/lunar).
 * This ROS node does not currently work with [ROS 2](https://github.com/ros2/ros2/wiki).
 * This ROS node currently does not provide the unit-tests which ensure the proper operation of the camera.  Future versions of the node will provide ROS compatible unit-tests.
-* This ROS node currently does not support running multiple T265 cameras at once. This will be addressed in a future update. 
+* This ROS node currently does not support running multiple T265 cameras at once. This will be addressed in a future update.
 
 ## License
 Copyright 2018 Intel Corporation
